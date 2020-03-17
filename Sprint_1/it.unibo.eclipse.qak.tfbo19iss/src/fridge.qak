@@ -1,0 +1,35 @@
+System fridge
+
+mqttBroker "localhost" : 1883
+
+Dispatch modelUpdate : modelUpdate(TARGET, VALUE)	//TARGET = always fridge, VALUE = add(food) | remove(food)
+Dispatch request : request(S, F)	//S = maitre | roombutlerrobot, F = food-code
+
+Context ctxFridge  ip [host="localhost" port=8030]  -mqtt
+
+QActor fridge context ctxFridge{
+	State s0 initial {		
+		solve( consult("sysRules.pl") )       
+		solve( consult("fridgeModel.pl") )
+	}
+	Goto waitCmd
+	
+	State waitCmd { }
+	Transition t0
+		whenMsg request -> handleRequest
+		whenMsg modelUpdate -> updateModel
+	
+	State handleRequest {
+		onMsg(request : request(S, F)) {
+			run itunibo.fridge.fridgeModelSupport.answerRequest(myself, payloadArg(0), payloadArg(1))
+		}
+	}
+	Goto waitCmd
+	
+	State updateModel {
+		onMsg(modelUpdate : modelUpdate(fridge, V)) {
+			run itunibo.fridge.fridgeModelSupport.updateFridgeModel(myself, payloadArg(1))
+		}
+	}
+	Goto waitCmd
+}

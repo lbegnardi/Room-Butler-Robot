@@ -1,0 +1,8 @@
+To run the project:
+- execute "it.unibo.robots19/node/WEnv/startServer.bat" to start the virtual environment;
+- execute "it.unibo.fridge-1.0/bin/it.unibo.fridge.bat";
+- execute "it.unibo.robotmind-1.0/bin/it.unibo.robotmind.bat";
+- execute "it.unibo.roombutlerrobot-1.0/bin/it.unibo.roombutlerrobot.bat";
+- start the frontend as showed in section 7.6 of the report.
+
+Possible problems: starting so many processes on the same machine (in particular the virtual environment which is quite heavy) could lead, if the CPU is not powerful enough, to wrong timing in the robot steps and therefore to positions out of the map grid.

@@ -1,0 +1,425 @@
+/*
+ * Sprint 2
+ * roombutlerrobot.qak 
+ */
+System roombutlerrobot
+
+mqttBroker "localhost" : 1883
+ 
+Event modelState : modelState(VALUE)
+Event roomModelChanged : modelChanged(RES, VALUE)
+
+Dispatch modelUpdate  : modelUpdate(TARGET, VALUE)
+Dispatch modelConsult : modelConsult(TARGET)
+
+Dispatch request  : request(S, F)	//S = sender, F = food-code
+Dispatch answer   : answer(A)		//A = yes | no
+Dispatch warning  : warning
+
+Dispatch prepChange : prepChange(P) // P = new preparation set
+
+Dispatch prepare : prepare
+Dispatch addFood : addFood(X)	//X = food-code
+Dispatch clear	 : clear
+
+Dispatch stepOk   : stepOk
+Dispatch stepFail : stepFail(T)	//R = ok | obstacle, T = time
+
+Dispatch goalUpdate : goalUpdate(G, X, Y) //G = pantry | fridge | dishwasher | home, X = coord x of G, Y = coord y of G
+Dispatch goalOk : goalOk(X)	//X = pantry | fridge | dishwasher | home
+
+Context ctxRBR			  ip [host="localhost" port=8038] -mqtt
+Context ctxDummyForMind	  ip [host="resourcelocalhost" port=8035] -mqtt
+Context ctxDummyForFridge ip [host="fridgehost" port=8030] -mqtt
+
+ExternalQActor resourcemodel  context ctxDummyForMind
+ExternalQActor fridge	  	  context ctxDummyForFridge
+
+QActor roombutlerrobot context ctxRBR { 
+	["
+	  var NextGoal = \"\"
+	  var GoalX = \"\"
+	  var GoalY = \"\"
+	  var CurObject = \"\"
+	  var actionDone = false
+	"]
+	
+	State s0 initial {
+		solve( consult("butlerRobotKb.pl") )
+		solve( consult("sysRules.pl") )
+	}
+	Goto waitCmd
+	
+	State waitCmd {	println("&&& RBR waitCmd ... ")	} 
+	Transition t0
+		whenMsg prepChange -> changePrepSet
+		whenMsg prepare -> prepareTheRoomInit
+		whenMsg addFood -> addFoodOnTableInit
+		whenMsg clear 	-> clearTheRoomInit
+
+	State changePrepSet {
+		onMsg(prepChange : prepChange(P)) {
+			run itunibo.rbr.roomButlerRobotSupport.changePrepSet(myself, payloadArg(0))
+		}
+	}
+	Goto waitCmd
+
+	//PREPARE THE ROOM
+	State prepareTheRoomInit {
+		["
+		  actionDone = false
+		  NextGoal = \"pantry\"
+		  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+		  GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+		"]
+		forward planexecutor -m goalUpdate : goalUpdate($NextGoal, $GoalX, $GoalY)
+		
+		//at least one item from the pantry must be in the preparation set
+		["solve( \"preparation([H|T])\" )"]
+		ifSolved {
+			["
+			  solve( \"replaceRule(preparation([H|T]), preparation(T))\" )
+			  CurObject = getCurSol(\"H\").toString()
+			"]
+		}
+	}
+	Goto waitPrepare
+	
+	State waitPrepare { println("WAIT PREPARE") }
+	Transition t0
+		whenMsg goalOk -> prepareTheRoomContinue
+		whenEvent roomModelChanged -> prepareTheRoomContinue
+
+	State prepareTheRoomContinue {
+		printCurrentMessage
+		delay 1000
+		
+		onMsg( goalOk : goalOk(pantry) ) {
+			forward resourcemodel -m modelUpdate : modelUpdate(pantry, remove($CurObject))
+		}
+		onMsg( goalOk : goalOk(fridge) ) {
+			forward fridge -m modelUpdate : modelUpdate(fridge, remove($CurObject))
+		}
+		onMsg( goalOk : goalOk(table) ) {
+			forward resourcemodel -m modelUpdate : modelUpdate(table, add($CurObject))
+		}
+		onMsg( goalOk : goalOk(home) ) {
+			["actionDone = true"]
+		}
+		
+		onMsg( roomModelChanged : modelChanged(pantry, remove(_)) ) {
+			["
+			  NextGoal = \"table\"
+		  	  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+		      GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+			"]
+			forward planexecutor -m goalUpdate : goalUpdate($NextGoal, $GoalX, $GoalY)
+		}
+		onMsg( roomModelChanged : modelChanged(fridge, remove(_)) ) {
+			["
+			  NextGoal = \"table\"
+		  	  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+		      GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+			"]
+			forward planexecutor -m goalUpdate : goalUpdate($NextGoal, $GoalX, $GoalY)
+		}
+		onMsg( roomModelChanged : modelChanged(table, add(_)) ) {
+			["solve( \"preparation([H|T])\" )"]
+			println(currentSolution)
+			ifSolved {
+				["
+				  solve( \"replaceRule(preparation([H|T]), preparation(T))\" )
+				  CurObject = getCurSol(\"H\").toString()
+				  if(CurObject.equals(\"dish\"))
+					  NextGoal = \"pantry\"
+				  else
+				  	  NextGoal = \"fridge\"
+				  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+		     	  GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+				"]				
+			}
+			else { //preparation list empty
+				["
+				  CurObject = \"\"
+				  NextGoal = \"home\"
+				  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+		      	  GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+				"]
+			}
+			println("$NextGoal")
+			forward planexecutor -m goalUpdate : goalUpdate($NextGoal, $GoalX, $GoalY)
+		}
+	}
+	Goto waitCmd if "actionDone" else waitPrepare
+	
+	//ADD FOOD ON THE TABLE
+	State addFoodOnTableInit {
+		["actionDone = false"]
+		onMsg(addFood : addFood(F)) {
+			//check if the fridge contains F
+			forward fridge -m request : request(roombutlerrobot, $payloadArg(0))
+			["CurObject = \"${payloadArg(0)}\" "]
+		}
+	}
+	Transition t0
+		whenMsg answer -> checkFridgeAnswer
+	
+	State checkFridgeAnswer {
+		printCurrentMessage
+		onMsg(answer : answer(yes)) {
+			["
+			  NextGoal = \"fridge\"
+			  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+		      GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+			"]
+			forward planexecutor -m goalUpdate : goalUpdate($NextGoal, $GoalX, $GoalY)
+		}
+		onMsg(answer : answer(no)) {
+			["CurObject = \"\"
+			  NextGoal = \"\" 
+			  GoalX = \"\"
+		      GoalY = \"\"
+			  actionDone = true
+			"]
+			forward resourcemodel -m warning : warning
+		}
+	}
+	Goto waitCmd if "actionDone" else waitAddFood
+	
+	State waitAddFood { println("WAIT ADD FOOD") }
+	Transition t0
+		whenMsg goalOk -> addFoodOnTheTableContinue
+		whenEvent roomModelChanged -> addFoodOnTheTableContinue
+	
+	State addFoodOnTheTableContinue {
+		delay 1000
+		
+		onMsg( goalOk : goalOk(fridge) ) {
+			forward fridge -m modelUpdate : modelUpdate(fridge, remove($CurObject))
+		}
+		onMsg( goalOk : goalOk(table) ) {
+			forward resourcemodel -m modelUpdate : modelUpdate(table, add($CurObject))
+		}
+		onMsg( goalOk : goalOk(home) ) {
+			["actionDone = true"]
+		}
+		
+		onMsg( roomModelChanged : modelChanged(fridge, remove(_)) ) {
+			["
+			  NextGoal = \"table\"
+			  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+		      GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+			"]
+			forward planexecutor -m goalUpdate : goalUpdate($NextGoal, $GoalX, $GoalY)
+		}
+		onMsg( roomModelChanged : modelChanged(table, add(_)) ) {
+			["
+			  CurObject = \"\"
+			  NextGoal = \"home\"
+			  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+		      GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+			"]
+			forward planexecutor -m goalUpdate : goalUpdate($NextGoal, $GoalX, $GoalY)
+		}
+	}
+	Goto waitCmd if "actionDone" else waitAddFood
+	
+	//CLEAR THE ROOM
+	State clearTheRoomInit {
+		["actionDone = false"]
+		forward resourcemodel -m modelConsult : modelConsult(table)
+	}
+	Transition t0
+		whenEvent modelState -> checkTableState
+	
+	State checkTableState {
+		printCurrentMessage
+		onMsg(modelState : modelState(S) ) {
+			["solve( \"table(_)\" )"]
+			ifSolved {
+				["solve( \"replaceRule(table(_), table(${payloadArg(0)}))\" )"]
+			} else {
+				["solve( \"addRule(table(${payloadArg(0)}))\" )"]
+			}
+			println(currentSolution)
+		}
+		["
+		  NextGoal = \"table\"
+		  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+		  GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+		"]
+		forward planexecutor -m goalUpdate : goalUpdate($NextGoal, $GoalX, $GoalY)
+	}
+	Goto waitClear
+	
+	State waitClear { }
+	Transition t0
+		whenMsg goalOk -> clearTheRoomContinue
+		whenEvent roomModelChanged -> clearTheRoomContinue
+	
+	State clearTheRoomContinue {
+		printCurrentMessage
+		delay 1000
+		onMsg( goalOk : goalOk(fridge) ) {
+			forward fridge -m modelUpdate : modelUpdate(fridge, add($CurObject))
+		}
+		onMsg( goalOk : goalOk(dishwasher) ) {
+			forward resourcemodel -m modelUpdate : modelUpdate(dishwasher, add($CurObject))
+		}
+		onMsg( goalOk : goalOk(table) ) {
+			["solve( \"table([H|T])\" )"]
+			println(currentSolution)
+			ifSolved {
+				["
+				  solve( \"replaceRule(table([H|T]), table(T))\" )
+				  CurObject = getCurSol(\"H\").toString()
+				  if(CurObject.equals(\"dish\"))
+					  NextGoal = \"dishwasher\"
+				  else
+				  	  NextGoal = \"fridge\"
+				  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+		      	  GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+				"]
+				forward resourcemodel -m modelUpdate : modelUpdate(table, remove($CurObject))
+			}
+			else { //no more objects on the table
+				["
+				  CurObject = \"\"
+				  NextGoal = \"home\"
+				  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+		      	  GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+				"]
+				forward planexecutor -m goalUpdate : goalUpdate($NextGoal, $GoalX, $GoalY)
+			}
+			//println("$NextGoal")
+		}
+		onMsg( goalOk : goalOk(home) ) {
+			["actionDone = true"]
+		}
+		
+		onMsg( roomModelChanged : modelChanged(dishwasher, add(_)) ) {
+			["
+			  NextGoal = \"table\"
+			  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+		      GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+			"]
+			forward planexecutor -m goalUpdate : goalUpdate($NextGoal, $GoalX, $GoalY)
+		}
+		onMsg( roomModelChanged : modelChanged(fridge, add(_)) ) {
+			["
+			  NextGoal = \"table\"
+			  GoalX = itunibo.rbr.roomButlerRobotSupport.getGoalCoordX(myself, NextGoal)
+	      	  GoalY = itunibo.rbr.roomButlerRobotSupport.getGoalCoordY(myself, NextGoal)
+			"]
+			forward planexecutor -m goalUpdate : goalUpdate($NextGoal, $GoalX, $GoalY)
+		}
+		onMsg( roomModelChanged : modelChanged(table, remove(_)) ) {
+			forward planexecutor -m goalUpdate : goalUpdate($NextGoal, $GoalX, $GoalY)
+		}
+	}
+	Goto waitCmd if "actionDone" else waitClear
+}
+
+QActor planexecutor context ctxRBR {
+	["
+	  var mapEmpty = true
+	  val mapname = \"roommap\"
+	  //var Tback = 100 
+
+	  var Curmove = \"\"
+	  var curmoveIsForward = false
+
+	  var CurGoal = \"\"
+
+	  //REAL ROBOT
+	  //var StepTime = 1000
+	  //var PauseTime = 500L
+
+	  //VIRTUAL ROBOT
+	  var StepTime = 330
+	  var PauseTime = 400	//increased because it wouldn't do two rotations in a row
+
+	  var PauseTimeL = PauseTime.toLong()
+	"]
+	
+	State s0 initial {
+		solve ( consult("moves.pl") )
+		run itunibo.planner.plannerUtil.initAI()
+		run itunibo.planner.moveUtils.loadRoomMap(myself, mapname)
+		run itunibo.planner.moveUtils.showCurrentRobotState()
+		["val MapStr = itunibo.planner.plannerUtil.getMapOneLine()"]
+		forward resourcemodel -m modelUpdate : modelUpdate(roomMap, $MapStr)
+	}
+	Goto waitCmd
+	
+	State waitCmd { }
+	Transition t0
+		whenMsg goalUpdate -> createPlan
+	
+	State createPlan {
+		printCurrentMessage
+		onMsg( goalUpdate : goalUpdate(G, X, Y) ) {
+			
+			["CurGoal = payloadArg(0)"]
+			run itunibo.planner.plannerUtil.setGoal(payloadArg(1), payloadArg(2))
+		}
+		run itunibo.planner.moveUtils.doPlan(myself)
+	}
+	Goto executePlannedActions
+
+	State executePlannedActions {
+		solve( retract(move(M)) )
+		ifSolved {
+			["
+			  Curmove = getCurSol(\"M\").toString()
+			  curmoveIsForward = (Curmove == \"w\")
+			"]
+		} else {
+			["
+			  Curmove = \"\"
+			  curmoveIsForward = false
+			"]
+		}
+		println("executePlannedActions doing $Curmove")
+	}
+	Goto cheakAndDoAction if "(Curmove.length > 0)" else goalOk
+	
+	State goalOk {
+		//run itunibo.planner.moveUtils.showCurrentRobotState()
+		//["val MapStr = itunibo.planner.plannerUtil.getMapOneLine()"]
+		//forward resourcemodel -m modelUpdate : modelUpdate(roomMap, $MapStr)
+		forward roombutlerrobot -m goalOk : goalOk($CurGoal)
+	}
+	Goto waitCmd
+	
+	//Execute the move if it is a rotation or halt
+	State cheakAndDoAction { }
+	Goto doForwardMove if "curmoveIsForward" else doTheMove
+	
+	State doTheMove {
+		//println("ROTATION")
+		run itunibo.planner.moveUtils.rotate(myself, Curmove, PauseTime)
+	}
+	Goto executePlannedActions
+	
+	State doForwardMove {
+		//println("FORWARD")
+		delayVar PauseTimeL	//Otherwise is too fast, even with remote interaction
+		run itunibo.planner.moveUtils.attemptTomoveAhead(myself, StepTime)
+	}
+	Transition t0
+		whenMsg stepOk -> handleStepOk
+		whenMsg stepFail -> handleStepFail
+	
+	State handleStepOk {
+		run itunibo.planner.moveUtils.updateMapAfterAheadOk(myself)
+		["val MapStr = itunibo.planner.plannerUtil.getMapOneLine()"]
+		forward resourcemodel -m modelUpdate : modelUpdate(roomMap, $MapStr)
+		run itunibo.planner.moveUtils.showCurrentRobotState()
+	}
+	Goto executePlannedActions
+	
+	State handleStepFail {
+		println("NEVER HERE!")
+	}
+}

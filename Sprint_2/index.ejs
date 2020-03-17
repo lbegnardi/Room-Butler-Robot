@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ResourceAccess</title>
+<link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/bootstrap/3.3.1/css/bootstrap.min.css">
+<script type="text/javascript" src="/socket.io/socket.io.js"></script>
+<script>
+function escapeRegExp(str) {
+    return str.replace(/([.*+?^=!:${}()|\[\]\/\\])/g, "\\$1");
+}
+       var socket  = io.connect();
+       socket.on('connect', function(){ 
+        		console.log("socket connected");
+       });
+       socket.on( 'message', function(v){ 
+       		console.log("RECEIVED " + v);
+        	if( v.indexOf("robotState:") >= 0 ){document.getElementById('robotDisplay').innerHTML=v; }
+        	if( v.indexOf("table:") >= 0 ){document.getElementById('table').innerHTML=v; }
+        	if( v.indexOf("pantry:") >= 0 ){document.getElementById('pantry').innerHTML=v; }
+        	if( v.indexOf("dishwasher:") >= 0 ){document.getElementById('dishwasher').innerHTML=v; }
+			
+        	if( v.indexOf("roomMap:") >= 0 ){
+        		v1 = v.replace("roomMap:state('", "").replace("')", "");
+        		v2 = "<br/><pre>"+ v1.replace(/@/g, "<br/>")+"</pre>";
+          		console.log("v2= " + v2);
+        		document.getElementById('mapDisplay').innerHTML=v2; 
+        	}
+			if( v.indexOf("Warning") >= 0){window.alert(v); }
+			if( v.indexOf("Fridge") >= 0){window.alert(v); }
+			if( v.indexOf("Answer") >= 0){window.alert(v); }
+			
+       	});
+</script>
+ 
+</head>
+
+<body>
+
+<div style="background-color: #D2B4DE">
+<h2>Resources console</h2>
+<center> 
+	<table >
+		<tr>
+			<td>
+				<h2>Fridge</h2>
+			</td>
+			<td align="center">
+				<form method="post">
+				  	<input formaction="/addFridge" type="submit" style="font-size:30px"  value="ADD" >
+			</td>
+			<td align="center">
+				  	<input formaction="/removeFridge" type="submit" style="font-size:30px"  value="REMOVE"  >
+			</td>
+			<td>
+					<input type="text" name="foodcode_resfridge" placeholder="Enter food-code">
+				</form>
+			</td>
+		</tr>
+		<tr>
+			<td>
+				<h2>Table</h2>
+			</td>
+			<td align="center">
+				<form method="post">
+				  	<input formaction="/addTable" type="submit" style="font-size:30px"  value="ADD" >
+			</td>
+			<td align="center">
+				  	<input formaction="/removeTable" type="submit" style="font-size:30px"  value="REMOVE"  >
+			</td>
+			<td>
+					<input type="text" name="itemcode_table" placeholder="Enter item-code">
+				</form>
+			</td>
+		</tr>
+		<tr>
+			<td>
+				<h2>Pantry</h2>
+			</td>
+			<td align="center">
+				<form method="post">
+				  	<input formaction="/addPantry" type="submit" style="font-size:30px"  value="ADD" >
+			</td>
+			<td align="center">
+				  	<input formaction="/removePantry" type="submit" style="font-size:30px"  value="REMOVE"  >
+			</td>
+			<td>
+					<input type="text" name="itemcode_pantry" placeholder="Enter item-code">
+				</form>
+			</td>
+		</tr>
+		<tr>
+			<td>
+				<h2>Dishwasher</h2>
+			</td>
+			<td align="center">
+				<form method="post">
+				  	<input formaction="/addDishwasher" type="submit" style="font-size:30px"  value="ADD" >
+			</td>
+			<td align="center">
+				  	<input formaction="/removeDishwasher" type="submit" style="font-size:30px"  value="REMOVE"  >
+			</td>
+			<td>
+					<input type="text" name="itemcode_dishwasher" placeholder="Enter item-code">
+				</form>
+			</td>
+		</tr>
+	</table>
+</center>
+
+<div style="background-color: #D2B4DE">
+<h2>Application console</h2>
+<center> 
+	<table >
+		<tr>
+			<td align="center">
+				<form action="/prepare" method="post">
+				  	<input type="submit" style="font-size:30px;"  value="PREPARE">
+				</form>
+			</td>
+			<td align="center">
+				<form action="/clear" method="post">
+				  	<input type="submit" style="font-size:30px;"  value="CLEAR" >
+				</form>
+			</td>
+		</tr>
+		<tr>
+			<td align="center">
+				<form action="/addfood" method="post">
+				  	<input type="submit" style="font-size:30px;"  value="ADD FOOD">
+			</td>
+			<td>
+					<input type="text" name="foodcode_app" placeholder="Enter food-code">
+				</form>
+			</td>				
+		</tr>
+	</table>
+</center>
+
+<h2>Fridge console</h2> 
+<center>
+	<form action="/expose" method="post">
+	  	<input type="submit" style="font-size:30px;"  value="EXPOSE">
+	</form>
+	<table >
+		<tr>
+			<td align="center">
+				<form action="/ask" method="post">
+				  	<input type="submit" style="font-size:30px;"  value="ASK">
+			</td>
+			<td align="center">
+					<input type="text" name="foodcode_fridge" placeholder="Enter food-code">
+				</form>
+			</td>
+		</tr>
+	</table>
+</center>
+
+</div>
+<div style="background-color: #FAF19C">
+	<div>
+ 		<b>ROBOT</b>: <span id="robotDisplay"></span>
+  	</div>
+	<div>
+  		<b>TABLE</b>: <span id="table"></span>
+	</div>
+	<div>
+ 		<b>PANTRY</b>: <span id="pantry"></span>
+  	</div>
+	<div>
+  		<b>DISHWASHER</b>: <span id="dishwasher"></span>
+	</div>
+	<div>
+  		<b>MAP DISPLAY</b>: <span id="mapDisplay"></span>
+	</div>
+</div>
+<center></center>
+</body>
+</html>
